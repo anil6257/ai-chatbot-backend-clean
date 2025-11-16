@@ -6,33 +6,87 @@ const OpenAI = require("openai");
 
 dotenv.config();
 
-// Load FAQ data from faq.json (must be in same folder)
+// ---------- Load FAQ data ----------
 let faq = [];
 try {
   const faqRaw = fs.readFileSync("faq.json", "utf8");
   faq = JSON.parse(faqRaw);
+  console.log(`Loaded ${faq.length} FAQ entries.`);
 } catch (err) {
   console.error("Could not load faq.json. Make sure the file exists and is valid JSON.");
   faq = [];
 }
 
 const app = express();
-app.use(cors());           // allow requests from your frontend (FlexiFunnels)
-app.use(express.json());   // parse JSON bodies
+app.use(cors());
+app.use(express.json());
 
-// Initialize OpenAI client
+// ---------- OpenAI Client ----------
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// --------- Helper: FAQ matcher ---------
+// ---------- Helper: FAQ Matcher ----------
 function findFAQ(message) {
   if (!message || !faq.length) return null;
+  const text = message.toLowerCase().trim();
 
-  const text = message.toLowerCase();
+  // 1) CONTACT-related detection
+  if (
+    text.includes("contact number") ||
+    text.includes("whatsapp number") ||
+    text.includes("whats app number") ||
+    text.includes("phone number") ||
+    text.includes("mobile number") ||
+    text.includes("call you") ||
+    text.includes("call sir") ||
+    text.includes("can i call") ||
+    text.includes("how can i contact") ||
+    (text.includes("number") && (text.includes("call") || text.includes("contact") || text.includes("whatsapp")))
+  ) {
+    const contactFaq = faq.find((item) => {
+      const q = (item.q || "").toLowerCase();
+      return q.includes("contact number") || q.includes("can i call");
+    });
+    if (contactFaq) return contactFaq.a;
+  }
 
-  // Very simple keyword-based matcher:
-  // For each FAQ question, split into words and see if some important word appears in user text
+  // 2) PAYMENT-related detection
+  if (
+    text.includes("payment") ||
+    text.includes("pay") ||
+    text.includes("fees") ||
+    text.includes("price") ||
+    text.includes("amount") ||
+    text.includes("cost") ||
+    text.includes("discount") ||
+    text.includes("offer") ||
+    text.includes("upi") ||
+    text.includes("bank") ||
+    text.includes("transaction") ||
+    text.includes("payment link") ||
+    text.includes("link for payment")
+  ) {
+    const paymentFaq = faq.find((item) =>
+      (item.q || "").toLowerCase().includes("payment instructions")
+    );
+    if (paymentFaq) return paymentFaq.a;
+  }
+
+  // 3) PROGRAM START detection
+  if (
+    text.includes("when program will start") ||
+    text.includes("when will program start") ||
+    text.includes("kab se") ||
+    (text.includes("when") && text.includes("start"))
+  ) {
+    const startFaq = faq.find((item) =>
+      (item.q || "").toLowerCase().includes("when will the program start")
+    );
+    if (startFaq) return startFaq.a;
+  }
+
+  // 4) Generic keyword-based matching across FAQ
   for (const item of faq) {
     const question = (item.q || "").toLowerCase();
     const keywords = question.split(/\s+/).filter((w) => w.length > 3); // ignore tiny words
@@ -47,12 +101,12 @@ function findFAQ(message) {
   return null;
 }
 
-// --------- Health check route ---------
+// ---------- Health Check ----------
 app.get("/", (req, res) => {
   res.send("AI Chatbot Backend is running ✅");
 });
 
-// --------- Main chat endpoint ---------
+// ---------- Main Chat Endpoint ----------
 app.post("/api/chat", async (req, res) => {
   try {
     const userMessage = (req.body.message || "").trim();
@@ -61,64 +115,65 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ error: "Message is required." });
     }
 
-    // 1) Try FAQ first (cheap + consistent)
+    // 1) Try FAQ first
     const faqAnswer = findFAQ(userMessage);
     if (faqAnswer) {
       return res.json({ reply: faqAnswer });
     }
 
-    // 2) Fall back to OpenAI for everything else
+    // 2) Fallback to GPT (only about 21-Day Angel Manifestation Bootcamp)
     const completion = await client.chat.completions.create({
       model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
-          content: `You are an AI assistant for Dr. Nitin Mohan Lal’s 21-Day Inner Image Improvement / Angel Manifestation Program.
+          content: `You are an AI assistant ONLY for Dr. Nitin Mohan Lal’s 21-Day Angel Manifestation Bootcamp (also called 21-Day Inner Image Improvement Program).
 
-Your responsibilities:
+IMPORTANT LIMITS:
+- Do NOT talk about other programs like Tibetan Breathology, Angel Happiness Program, 9-step, or any advanced courses.
+- If the user asks about any other program, say you can only guide about the 21-Day Angel Manifestation Bootcamp and suggest they contact support on WhatsApp.
 
-1. Answer ONLY based on the official program details listed below.
-2. Always reply clearly, politely, and concisely, in simple English or light Hinglish (whichever seems natural).
-3. If someone asks anything outside program topics, gently redirect to program benefits and suggest they contact the human support team if needed.
-4. NEVER give medical, legal, or financial advice.
-5. If asked about payments, always direct them to official payment links or say “please use only the links on this page to pay.”
-6. If asked for Nitin Sir’s personal number, say it cannot be shared and mention that consultations are high-ticket and limited.
+CONTACT & PAYMENT RULES:
+- Official WhatsApp support number: +919971400377.
+- This WhatsApp number is ONLY for communication and support.
+- NEVER tell the user to pay money on WhatsApp, UPI, or to any personal number.
+- ALWAYS say: “Please pay ONLY using the official payment buttons or links on this page.”
+- If user asks for UPI, bank details, or to pay directly on WhatsApp, clearly say that payments must be done only via the official buttons or links on this page.
 
-PROGRAM DETAILS:
-- Starts within 24 hours of payment.
-- Access is usually shared by counselor via phone call and/or email/WhatsApp.
-- Learning is through pre-recorded videos.
-- Live classes are usually on Saturdays at around 9 PM (3 main Q&A / support sessions).
-- Recording validity is 21 days only (not lifetime).
-- Language: mostly Hindi / Hinglish.
-- Counselors are available to help with doubts.
-- No refunds.
-- No trial/demo classes.
-- 15,000+ students have already benefited from Nitin Sir’s courses and programs.
-- Program works when student follows instructions and takes action consistently.
-- Not app-based; access is via web platform.
-- Higher-level courses exist (like 9-step, advanced programs) but are optional and separate.
-- Program includes: Divine You Meditation, Angel Affirmations, Chakra Assessment, Aura Cleaning, Vibration/Frequency Work, Self-Love & Self-Forgiveness, Setting Boundaries, Manifestation Techniques for health, relationships and money.
+PROGRAM DETAILS (21-Day Angel Manifestation Bootcamp):
+- A 21-day guided program to transform the inner image, heal emotional blocks, and align energy using angels, meditation, affirmations, and mindset work.
+- Includes: Divine You Meditation, Angel Affirmations, Understanding Angels, Aura Cleaning, Chakra Assessment, Vibration & Frequency Work, Self-Love & Forgiveness, Setting Boundaries, Manifestation Techniques for health, relationships and money.
+- Learning format: pre-recorded videos that can be watched anytime.
+- Live support/Q&A sessions: usually once a week in the evening.
+- Language: mainly Hindi / Hinglish.
+- Access activation: typically within 24 hours after payment.
+- Recording validity: usually 21 days from activation (not lifetime).
+- Counselors and support team help with doubts.
 
-PLANS & PRICING (example structure):
-- Basic – ₹699: Pre-recorded content only.
-- Standard – ₹999: Pre-recorded + counselor support.
-- Premium – ₹1038 (Recommended): Pre-recorded + counselor + live Q&A + angel blessing type support.
+PLANS (example structure):
+- Basic – ₹699: pre-recorded content only.
+- Standard – ₹999: pre-recorded content + counselor support.
+- Premium – ₹1038: pre-recorded content + counselor support + live Q&A and angel blessing–type support.
 
-NOTE: Exact prices and bonuses can change with offers, so if the user asks “what is the exact price right now?” tell them to check the button/price on the current page.
+IMPORTANT: If the user asks for the exact current price, always say:
+“The most accurate and current price is shown on the payment button on this page. Offers may change, so please follow the price you can see on the button.”
 
-GENERAL RULES:
+SAFETY & ETHICS:
 - No demo classes.
-- No personal number of sir is shared.
-- Activation and access can take some time (up to 24 hours), but the team supports via WhatsApp/call.
-- No magical instant results; results require consistent practice.
-- Angels and spiritual work do NOT replace doctors, medicines or medical treatment.
+- No refund policy.
+- Do not share Nitin sir’s personal number.
+- This program does not replace medical treatment, doctors or professional therapy.
+- Never claim that angels or the program can cure diseases like cancer or diabetes.
 
 TONE:
-You are warm, gentle, encouraging, spiritual, and trustworthy. You talk like a caring guide for modern Indians (30–55 age group, professionals, homemakers, business owners).
+- Warm, gentle, simple, spiritual, and encouraging.
+- Keep answers short and clear (around 3–6 sentences).
+- Use simple English or Hinglish depending on how the user writes.
+- You may use 1 emoji occasionally (like 🙏, 😊, 💫) if it feels natural.
 
-If you are not sure about something, say:
-“I’m not fully sure about this specific detail. Please check with the human counselor or support team on WhatsApp for confirmation.”`
+IF YOU ARE NOT SURE:
+If you are not fully sure about a detail (like current offer or exact timing), say:
+“I’m not fully sure about this specific detail. Please check the information on this page or message our support team on WhatsApp at +919971400377 for confirmation.”`
         },
         {
           role: "user",
@@ -130,18 +185,12 @@ If you are not sure about something, say:
     const reply = completion.choices[0].message.content;
     res.json({ reply });
   } catch (error) {
-    console.error("Error in /api/chat:");
-    if (error.response?.data) {
-      console.error(JSON.stringify(error.response.data, null, 2));
-      return res.status(500).json({ error: error.response.data });
-    } else {
-      console.error(error.message || error);
-      return res.status(500).json({ error: error.message || "Something went wrong." });
-    }
+    console.error("Error in /api/chat:", error);
+    res.status(500).json({ error: "Something went wrong on the server." });
   }
 });
 
-// --------- Start server ---------
+// ---------- Start Server ----------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
